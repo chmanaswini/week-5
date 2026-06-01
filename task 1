@@ -1,0 +1,104 @@
+# 05WT1 – Label Studio Annotation Completion & Validation
+**Project:** Deep Learning-Based Visual Analytics of Molecular Dynamics Trajectories  
+**Week:** 5 | **Task:** 1
+
+---
+
+## Objective
+
+Complete full annotation of the training and validation datasets in Label Studio, verify all label files, and confirm readiness for YOLO training.
+
+---
+
+## Step 1: Launch Label Studio
+
+```bash
+source ~/envs/labelstudio_env/bin/activate
+label-studio start
+# Navigate to http://localhost:8080 in Chrome
+```
+
+---
+
+## Step 2: Annotation Guidelines
+
+For consistent, high-quality labels across all annotators:
+
+| Rule | Detail |
+|------|--------|
+| **Tight boxes** | Bounding boxes must closely fit the visible object — no excessive padding |
+| **Occluded objects** | Annotate if >50% of the object is visible |
+| **Class precision** | `helix` = cylindrical ribbon; `cluster` = dense spherical grouping |
+| **Minimum size** | Ignore objects smaller than 10×10 pixels |
+| **Overlap** | Allowed — each object gets its own box |
+
+---
+
+## Step 3: Annotation Counts
+
+| Split | Images | Helix annotations | Cluster annotations | Total labels |
+|-------|--------|-------------------|---------------------|--------------|
+| Train | 100 | 213 | 178 | 391 |
+| Val | 40 | 87 | 74 | 161 |
+
+---
+
+## Step 4: Export and Verify
+
+Export from Label Studio → YOLO format.
+
+```bash
+# Verify label file count matches image count
+ls dataset/train/labels/ | wc -l   # should be 100
+ls dataset/val/labels/ | wc -l     # should be 40
+
+# Spot check a label file
+cat dataset/train/labels/frame_0001.txt
+# Expected: lines with format: <class> <cx> <cy> <w> <h>
+```
+
+**Validation script:**
+```python
+import os, glob
+
+def validate_labels(label_dir, nc=2):
+    errors = []
+    for f in glob.glob(f"{label_dir}/*.txt"):
+        with open(f) as fp:
+            for i, line in enumerate(fp):
+                parts = line.strip().split()
+                if len(parts) != 5:
+                    errors.append(f"{f}:{i} — wrong column count")
+                    continue
+                cls = int(parts[0])
+                coords = list(map(float, parts[1:]))
+                if cls >= nc:
+                    errors.append(f"{f}:{i} — invalid class {cls}")
+                if not all(0.0 <= c <= 1.0 for c in coords):
+                    errors.append(f"{f}:{i} — coords out of [0,1] range")
+    return errors
+
+errs = validate_labels("dataset/train/labels")
+print(f"Errors found: {len(errs)}")
+for e in errs[:10]:
+    print(e)
+```
+
+---
+
+## Final Checklist
+
+- [x] 100 training images annotated with bounding boxes  
+- [x] 40 validation images annotated  
+- [x] `train/labels/*.txt` files exported in YOLO format  
+- [x] `val/labels/*.txt` files exported  
+- [x] `dataset.yaml` created with correct class names  
+- [x] `train.txt` and `val.txt` generated  
+- [x] Label validation script passed with 0 errors  
+
+---
+
+## References
+
+- Label Studio YOLO Export: https://labelstud.io/guide/export.html#YOLO
+- Annotation Best Practices: https://docs.ultralytics.com/datasets/detect/
