@@ -1,34 +1,47 @@
-# 05WT2 – Image Scaling with FFmpeg (Preserving Aspect Ratio)
-**Project:** Deep Learning-Based Visual Analytics of Molecular Dynamics Trajectories  
+# 05WT2 – Image Scaling with FFmpeg (Aspect-Ratio Preserved)
+**Project:** Deep Learning-Based Visual Analytics of Molecular Dynamics Trajectories
 **Week:** 5 | **Task:** 2
 
 ---
 
 ## Objective
 
-Scale down all dataset images to a smaller, training-friendly resolution using FFmpeg, while preserving aspect ratio so that existing normalised YOLO label coordinates remain valid.
+Scale all protein trajectory frame images to a smaller, training-friendly
+resolution using FFmpeg, preserving aspect ratio so existing YOLO label
+coordinates remain mathematically valid without re-annotation.
 
 ---
 
-## Why Scaling is Required
+## Why Protein Renders Need Scaling
 
-MD trajectory renders from VMD or OVITO are typically exported at high resolutions (e.g., 1920×1080 or 1280×720). Training YOLO on large images:
-- Consumes excessive GPU memory
-- Slows training significantly
-- Offers diminishing returns beyond ~640px for many architectures
+VMD and OVITO typically export frames at high resolution:
+
+| Renderer | Typical Export Resolution |
+|----------|--------------------------|
+| VMD Tachyon | 1024×768 or 1280×960 |
+| VMD snapshot | 800×600 |
+| OVITO | 800×600 to 1920×1080 |
+
+Training YOLO on these large images:
+- Requires 4–8× more GPU memory
+- Slows training 3–5× unnecessarily
+- Offers no accuracy benefit for structure-level detection
 
 ---
 
-## Key Insight: Normalised Labels Are Scale-Invariant
+## Key Principle: Normalised Labels Are Aspect-Ratio Invariant
 
-YOLO `.txt` label files store coordinates as fractions of image width/height (0.0–1.0). As long as the **aspect ratio is preserved** during resizing, these fractional coordinates remain geometrically correct — no re-annotation is needed.
+YOLO stores labels as fractions of image size (0.0–1.0). As long as
+the **aspect ratio is preserved** during resize, the fractional coordinates
+still point to the correct pixel location after scaling.
 
 ```
-# Example label line
-0 0.512 0.334 0.148 0.092
-```
+# Original label for an alpha-helix in a 1280×960 frame:
+0  0.423  0.318  0.162  0.094
 
-If image is resized from 1280×720 → 384×216 (same 16:9 ratio), the helix at (51.2%, 33.4%) of the image is still correctly located.
+# After scaling to 384×288 (same 4:3 ratio):
+# The helix is still at 42.3% across, 31.8% down — label unchanged ✓
+```
 
 ---
 
@@ -36,14 +49,17 @@ If image is resized from 1280×720 → 384×216 (same 16:9 ratio), the helix at 
 
 ```bash
 mkdir -p dataset_scaled/train/images
-mkdir -p dataset_scaled/val/images
 
-# Scale width to 384, height calculated automatically to preserve ratio
-# -1 means "compute height to keep aspect ratio"
+# scale=384:-1 → width=384, height calculated to preserve ratio
 for img in dataset/train/images/*.png; do
-  fname=$(basename "$img")
-  ffmpeg -i "$img" -vf scale=384:-1 dataset_scaled/train/images/"$fname" -y -loglevel error
+    fname=$(basename "$img")
+    ffmpeg -i "$img" \
+           -vf scale=384:-1 \
+           dataset_scaled/train/images/"$fname" \
+           -y -loglevel error
 done
+
+echo "Scaled train images: $(ls dataset_scaled/train/images/ | wc -l)"
 ```
 
 ---
@@ -51,89 +67,117 @@ done
 ## Step 2: Scale Validation Images
 
 ```bash
+mkdir -p dataset_scaled/val/images
+
 for img in dataset/val/images/*.png; do
-  fname=$(basename "$img")
-  ffmpeg -i "$img" -vf scale=384:-1 dataset_scaled/val/images/"$fname" -y -loglevel error
+    fname=$(basename "$img")
+    ffmpeg -i "$img" \
+           -vf scale=384:-1 \
+           dataset_scaled/val/images/"$fname" \
+           -y -loglevel error
 done
+
+echo "Scaled val images: $(ls dataset_scaled/val/images/ | wc -l)"
 ```
 
 ---
 
-## Step 3: Copy Labels (No Re-annotation Needed)
+## Step 3: Copy Labels — No Changes Needed
 
 ```bash
-# Labels are already normalised — simply copy them
+# Labels are normalised — copy as-is
 cp -r dataset/train/labels dataset_scaled/train/labels
-cp -r dataset/val/labels dataset_scaled/val/labels
+cp -r dataset/val/labels   dataset_scaled/val/labels
+
+echo "Labels copied — no re-annotation required."
 ```
 
 ---
 
-## Step 4: Update `dataset.yaml` for Scaled Dataset
+## Step 4: Update `dataset.yaml`
 
 ```yaml
 # dataset_scaled.yaml
 path: /home/user/dataset_scaled
 train: train/images
-val: val/images
-test: test/images
+val:   val/images
+test:  test/images
 
 nc: 2
 names:
-  0: helix
-  1: cluster
+  0: alpha_helix
+  1: beta_sheet
 ```
 
 ---
 
-## Step 5: Verify Scaled Images
+## Step 5: Verify Scaled Images & Label Alignment
 
 ```python
 from PIL import Image
-import glob
+import glob, os
 
-for path in glob.glob("dataset_scaled/train/images/*.png")[:5]:
+print("=== Scaled Image Sizes ===")
+for path in sorted(glob.glob("dataset_scaled/train/images/*.png"))[:5]:
     img = Image.open(path)
-    print(f"{path}: {img.size}")
-# Expected output: (384, 216) for 16:9 source images
+    print(f"  {os.path.basename(path)}: {img.size}")
+
+print("\n=== Label–Image Pairing ===")
+imgs = set(os.path.splitext(f)[0]
+           for f in os.listdir("dataset_scaled/train/images"))
+lbls = set(os.path.splitext(f)[0]
+           for f in os.listdir("dataset_scaled/train/labels"))
+print(f"  Images: {len(imgs)} | Labels: {len(lbls)}")
+print(f"  Images without labels: {imgs - lbls}")
+print(f"  Labels without images: {lbls - imgs}")
+```
+
+**Expected output:**
+```
+=== Scaled Image Sizes ===
+  frame_0001.png: (384, 288)
+  frame_0007.png: (384, 288)
+  frame_0013.png: (384, 288)
+
+=== Label–Image Pairing ===
+  Images: 100 | Labels: 100
+  Images without labels: set()
+  Labels without images: set()
 ```
 
 ---
 
 ## Scaling Summary
 
-| Property | Before Scaling | After Scaling |
-|----------|---------------|---------------|
-| Resolution | 1280 × 720 | 384 × 216 |
-| Aspect Ratio | 16:9 | 16:9 (preserved) |
-| File size | ~1.2 MB/frame | ~85 KB/frame |
-| Labels valid? | Yes | Yes (no change needed) |
-| Total disk (train) | ~120 MB | ~8.5 MB |
+| Property | Before | After |
+|----------|--------|-------|
+| Resolution | 1280 × 960 | 384 × 288 |
+| Aspect ratio | 4:3 | 4:3 ✓ |
+| File size per frame | ~2.1 MB | ~95 KB |
+| Total train set disk | ~210 MB | ~9.5 MB |
+| Labels valid? | Yes | Yes — unchanged |
+| GPU memory per batch (est.) | ~6 GB | ~800 MB |
 
 ---
 
-## Alternative: Scale Using Python (PIL)
+## Note on Odd Dimensions
 
-```python
-from PIL import Image
-import os, glob
+VMD renders may not always produce images with dimensions divisible by 32
+(YOLO's preferred stride). FFmpeg's `-1` flag handles this automatically,
+but if you see a warning, force even height:
 
-INPUT_DIR = "dataset/train/images"
-OUTPUT_DIR = "dataset_scaled/train/images"
-TARGET_WIDTH = 384
-
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-for path in glob.glob(f"{INPUT_DIR}/*.png"):
-    img = Image.open(path)
-    w, h = img.size
-    new_h = int(h * TARGET_WIDTH / w)
-    resized = img.resize((TARGET_WIDTH, new_h), Image.LANCZOS)
-    resized.save(os.path.join(OUTPUT_DIR, os.path.basename(path)))
-    print(f"Resized {os.path.basename(path)}: {w}×{h} → {TARGET_WIDTH}×{new_h}")
+```bash
+# Force height to nearest even number (safe for all codecs)
+ffmpeg -i input.png -vf scale=384:-2 output.png
 ```
 
 ---
+
+## References
+
+- FFmpeg scale filter: https://ffmpeg.org/ffmpeg-filters.html#scale
+- YOLO image size guidelines: https://docs.ultralytics.com/modes/train/#arguments
+- Aspect ratio preservation: https://trac.ffmpeg.org/wiki/Scaling
 
 ## References
 
