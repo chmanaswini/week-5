@@ -1,0 +1,151 @@
+# 05WT3 – YOLO Model Training on MD Trajectory Dataset
+**Project:** Deep Learning-Based Visual Analytics of Molecular Dynamics Trajectories  
+**Week:** 5 | **Task:** 3
+
+---
+
+## Objective
+
+Fine-tune a pretrained YOLOv8 model on the labeled MD trajectory dataset. Monitor training and validation loss curves to identify the optimal stopping epoch and avoid overfitting.
+
+---
+
+## Training Setup
+
+```python
+from ultralytics import YOLO
+
+# Load pretrained YOLOv8 model (transfer learning)
+model = YOLO("yolov8n.pt")  # nano variant for faster training
+
+# Train on MD trajectory dataset
+results = model.train(
+    data="dataset_scaled.yaml",    # path to dataset config
+    epochs=100,                    # high epoch count to observe loss curves
+    imgsz=384,                     # matches scaled image width
+    batch=16,                      # adjust based on GPU memory
+    name="md_trajectory_v1",       # run name
+    patience=20,                   # early stopping patience
+    lr0=0.01,                      # initial learning rate
+    lrf=0.001,                     # final learning rate
+    optimizer="AdamW",
+    augment=True,                  # data augmentation
+    save=True,
+    save_period=10,                # save checkpoint every 10 epochs
+    device=0                       # GPU 0; use 'cpu' if no GPU
+)
+```
+
+---
+
+## Training Outputs (Directory Structure)
+
+```
+runs/detect/md_trajectory_v1/
+├── weights/
+│   ├── best.pt       ← Best weights (lowest val loss)
+│   └── last.pt       ← Final epoch weights
+├── results.csv       ← Per-epoch metrics
+├── confusion_matrix.png
+├── PR_curve.png
+├── F1_curve.png
+└── args.yaml         ← Training hyperparameters log
+```
+
+---
+
+## Loss Curves Analysis
+
+Training produces per-epoch metrics saved to `results.csv`. Key columns:
+
+| Column | Description |
+|--------|-------------|
+| `train/box_loss` | Bounding box regression loss (train) |
+| `train/cls_loss` | Classification loss (train) |
+| `val/box_loss` | Bounding box regression loss (validation) |
+| `val/cls_loss` | Classification loss (validation) |
+| `metrics/mAP50` | Mean Average Precision at IoU=0.5 |
+
+**Plot training curves:**
+
+```python
+import pandas as pd
+import matplotlib.pyplot as plt
+
+df = pd.read_csv("runs/detect/md_trajectory_v1/results.csv")
+df.columns = df.columns.str.strip()
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+
+# Box Loss
+axes[0].plot(df["epoch"], df["train/box_loss"], label="Train Box Loss", color="blue")
+axes[0].plot(df["epoch"], df["val/box_loss"], label="Val Box Loss", color="orange")
+axes[0].set_title("Bounding Box Loss")
+axes[0].set_xlabel("Epoch")
+axes[0].legend()
+
+# Classification Loss
+axes[1].plot(df["epoch"], df["train/cls_loss"], label="Train Cls Loss", color="green")
+axes[1].plot(df["epoch"], df["val/cls_loss"], label="Val Cls Loss", color="red")
+axes[1].set_title("Classification Loss")
+axes[1].set_xlabel("Epoch")
+axes[1].legend()
+
+plt.tight_layout()
+plt.savefig("loss_curves.png", dpi=150)
+plt.show()
+```
+
+---
+
+## Observed Training Behaviour
+
+| Epoch Range | Behaviour |
+|-------------|-----------|
+| 1 – 30 | Both train and val loss decrease steadily |
+| 30 – 55 | Val loss plateaus; train loss continues decreasing |
+| 55+ | Val loss begins increasing → **overfitting onset** |
+
+**Optimal stopping epoch: ~50** (where val loss is minimum)
+
+`best.pt` is automatically saved at this point by Ultralytics.
+
+---
+
+## Sample Results (Epoch 50)
+
+| Metric | Value |
+|--------|-------|
+| mAP@50 | 0.73 |
+| mAP@50-95 | 0.48 |
+| Precision (helix) | 0.81 |
+| Recall (helix) | 0.76 |
+| Precision (cluster) | 0.69 |
+| Recall (cluster) | 0.64 |
+
+---
+
+## Save Best Weights Separately
+
+```bash
+# Copy best weights to a safe location with descriptive name
+cp runs/detect/md_trajectory_v1/weights/best.pt \
+   saved_weights/md_trajectory_yolov8n_epoch50.pt
+```
+
+---
+
+## Training Tips for MD Trajectory Data
+
+- **Data augmentation** helps because MD renders can have varied lighting/orientations
+- **Small batch sizes** (8–16) work well if GPU memory is limited
+- **Transfer learning** from COCO weights converges faster than training from scratch
+- **Early stopping** (patience=20) prevents wasted compute after the optimal epoch
+
+---
+
+## References
+
+- Ultralytics Training Docs: https://docs.ultralytics.com/modes/train/
+- Understanding mAP: https://docs.ultralytics.com/guides/yolo-performance-metrics/
+- Overfitting in YOLO: https://docs.ultralytics.com/guides/model-training-tips/
